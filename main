@@ -1,0 +1,234 @@
+#!/usr/bin/env bash
+test -z $(type -p) || { echo bash required; exit 1; }
+set -e
+set -u
+#set -x
+source ${RRCONFINC}
+
+test "${RRUID}" -eq 0 || {
+        echo "No root account."
+        exit 1
+}
+
+## checking for getops e.g. --daily
+#
+
+
+period=''
+path=''
+
+test -f /var/spool/cron/root && {
+  path='/var/spool/cron/root'
+} || {
+  test -f /var/spool/cron/crontabs/root && {
+    path='/var/spool/cron/crontabs/root'
+  }
+  } || {
+        echo "could not find root crontab"
+        exit 0
+       }
+
+      
+
+while test $# -ge 1; do
+    if [[ "x$1" == 'x-h' ]] || [[ "x$1" == 'x--hourly' ]]; then
+      period='hourly'
+    elif [[ "x$1" == 'x-d' ]] || [[ "x$1" == 'x--daily' ]]; then
+	  period='daily'
+	elif [[ "x$1" == 'x-w' ]] || [[ "x$1" == 'x--weekly' ]]; then
+	  period='weekly'
+	elif [[ "x$1" == 'x-m' ]] || [[ "x$1" == 'x--monthly' ]]; then
+	  period='monthly'
+	elif [[ "x$1" == 'xhelp' ]] || [[ "x$1" == 'x--help' ]]; then
+          echo
+	  echo usage:
+          echo "Add an existing script into the period folder:"
+	  echo "  require cronjob <period> <script-source-path>"
+	  echo Available parameters:
+	  echo '  hourly  [-h]  [--hourly] '
+	  echo '  daily  [-d]  [--daily] '
+	  echo '  weekly  [-w]  [--weekly] '
+	  echo '  monthly  [-m]  [--monthly] '
+	  echo "example: require cronjob --daily /opt/myscripts/script.sh"
+          echo
+          echo "Add a task directly into the root crontab:"
+          echo '  require cronjob --crontab <crontab-entry>'
+          echo "Disable, enable or remove a cron entry in root crontab"
+          echo ' require cronjob --crontab --disable <crontab-entry>'
+	  echo ' require cronjob --crontab --enable <crontab-entry> '
+          echo ' require cronjob --crontab --remove <crontab-entry>'
+          echo
+          echo 'example: require cronjob --crontab "45 * * * * /bin/require discovery" '
+          echo 'example: require cronjob --crontab --remove "45 * * * * /bin/require discovery"' 
+	  exit 0
+    elif [[ "x$1" == 'x--delete' ]] || [[ "x$1" == 'x--remove' ]]; then   
+      if [[ "x$2" == 'x-h' ]] || [[ "x$2" == 'x--hourly' ]]; then
+        period='hourly'
+      elif [[ "x$2" == 'x-d' ]] || [[ "x$2" == 'x--daily' ]]; then
+	period='daily'
+      elif [[ "x$2" == 'x-w' ]] || [[ "x$2" == 'x--weekly' ]]; then
+	period='weekly'
+      elif [[ "x$2" == 'x-m' ]] || [[ "x$2" == 'x--monthly' ]]; then
+	period='monthly'  
+      elif [[ "x$2" != 'x' ]]; then
+	echo "No period parameter given."
+	echo "See require cronjob help"
+	exit 0
+      fi
+      test -n "$3" && {
+         test "x$1" != "x--crontab" && {
+           scriptname=$(basename $3)
+           test -f "/etc/cron.$period/$scriptname" && {
+             rm -rf "/etc/cron.$period/$scriptname"
+             echo "/etc/cron.$period/$scriptname succesfully removed"
+             exit 0
+           } || {
+              echo "file /etc/cron.$period/$scriptname does not exists."
+              exit 0
+             }
+        }
+      }
+    elif [[ "x$1" == 'x--crontab' ]]; then
+         test -n "$2" && {
+        test "x$2" == "x--disable" && {
+          test -z "$3" && {
+            echo "No crontab entry given."
+            echo "You can always try require cronjob --help"
+            exit 0
+          }
+          escaped_entry=$(echo "$3" | sed -e 's/[]\/$*.^[]/\\&/g' |  sed 's/\ /\\ /g')
+          newcrontab=$(sed "s/$escaped_entry/\#$escaped_entry/" "$path") || {
+            echo "Entry not found"
+            exit 0
+          }
+          echo "$newcrontab" > "$path"
+          exit 0
+        }
+        test "x$2" == 'x--enable' && {
+          test -z "$3" && {
+            echo "No crontab entry given."
+            echo "To enable entry, it must be the exact same as in $path"
+            echo "You can always try require cronjob --help"
+            exit 0
+          }
+          escaped_entry=$(echo "$3" | sed -e 's/[]\/$*.^[]/\\&/g' |  sed 's/\ /\\ /g')
+          newcrontab=$(sed "s/$escaped_entry//" "$path") || {
+            echo "Entry not found"
+            exit 0
+          }
+          echo "$newcrontab" > "$path"
+          exit 0
+        }
+        test "x$2" == "x--remove" && {
+          test -z "$3" && {
+            echo "No crontab entry given."
+            echo "To remove entry, it must be the exact same as in $path"
+            echo "You can always try require cronjob --help"
+            exit 0
+           }
+          
+          escaped_entry=$(echo "$3" | sed -e 's/[]\/$*.^[]/\\&/g' |  sed 's/\ /\\ /g')
+          grep -w "$escaped_entry" "$path" && {
+            newcrontab=$(sed "s/$escaped_entry//" "$path") || {
+              echo "entry not found"
+              exit 0
+            }
+            echo "$newcrontab" > "$path" 
+            exit 0
+            }|| {
+            grep -w "\#$escaped_entry" "$path" || {
+              newcrontab=$(sed "s/\#$escaped_entry//" "$path") || {
+                echo "Entry not found"
+                exit 0
+              }
+              echo "$newcrontab" > "$path"
+              exit 0
+            }
+          }
+        }
+        ### --crontab directly with crontab line, no other arguments
+        escaped_entry=$(echo "$2" | sed -e 's/[]\/$*.^[]/\\&/g' |  sed 's/\ /\\ /g')
+        grep -w "$escaped_entry" "$path" && exit 0 || {
+          echo "$2" >> "$path"
+          exit 0
+        }
+      } || {
+             echo "No crontab entry given."
+             echo "e.g. require cronjob --crontab 45 \* \* \* \* /bin/require discovery'"
+             exit 0
+           } 
+    elif [[ "x$1" != 'x' ]]; then
+      echo -n "Unknown parameter $1. "
+      echo Available parameters:
+      echo '  help  [help]  [--help] '
+      echo '  hourly  [-h]  [--hourly] '
+      echo '  daily  [-d]  [--daily] '
+      echo '  weekly  [-w]  [--weekly] '
+      echo '  monthly  [-m]  [--monthly] '
+    fi
+	
+    if [[ "x$2" != 'x' ]]; then
+      test "x$1" != 'x--crontab' && {
+        test -f "$2" || {
+          echo "input file: $2 does not exist"        
+          exit 0
+        }
+      }
+    fi	
+    
+  if [[ "x$3" == 'x--name' ]]; then
+      test -n "$4" && {
+      newname="$4"
+      } || {
+        echo "Name value not provided"
+        exit 0
+      }
+    fi
+
+    break
+  done
+  
+#Check if arguments is missing
+#
+  test $(echo "$1" | wc -c) -le 1 && {
+  echo -n "Unspecified schedule period. "
+  echo
+  echo require cronjob usage:
+  echo '  require cronjob <period> <script-destination-path>'
+  echo 'Available parameters:'
+  echo '  hourly  [-h]  [--hourly] '
+  echo '  daily  [-d]  [--daily] '
+  echo '  weekly  [-w]  [--weekly] '
+  echo '  monthly  [-m]  [--monthly] '
+  exit 0
+} || true
+
+test $( echo "$2" | wc -c) -le 1 && {
+         test "$1" != "--help" && {
+    echo 'Unspecified cronjob script destination path. '
+    echo 'require cronjob usage:'
+    echo '  require cronjob <period> <script-destination-path>'
+    echo "for more details use: require cronjob help"
+    exit 0
+  }
+} || true
+
+#Check if path is valid
+#
+test -f "$2" && {
+  test "x$2" == "x--name" && {
+    test -n "$4" && {
+      filename="$newname"
+    } 
+  }
+  }|| {
+         filename=$(basename $2)
+       }
+
+  test -f "/etc/cron.$period/$filename" && {
+    echo "file /etc/cron.$period/$filename already exists"
+    exit 0
+  } || {
+         cp "$2" "/etc/cron.$period/$filename"
+         chmod 700 "/etc/cron.$period/$filename"
+       }
